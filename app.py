@@ -1,33 +1,28 @@
 import streamlit as st
-import pandas as pd
-from openpyxl import Workbook
+from openpyxl import load_workbook
 from openpyxl.styles import PatternFill
 import tempfile
+from io import BytesIO
 
 st.title("📊 Excel Difference Highlighter")
 
 raw_file = st.file_uploader("Upload Raw Excel", type=["xlsx"])
-changed_file = st.file_uploader("Upload Changed Excel", type=["xlsx"])
+changed_file = st.file_uploader("Upload Updated Excel", type=["xlsx"])
 
 if raw_file and changed_file:
 
-    raw_excel = pd.ExcelFile(raw_file)
-    changed_excel = pd.ExcelFile(changed_file)
+    # Load workbooks
+    raw_wb = load_workbook(BytesIO(raw_file.read()), data_only=True)
+    changed_wb = load_workbook(BytesIO(changed_file.read()))
 
-    raw_sheets = set(raw_excel.sheet_names)
-    changed_sheets = set(changed_excel.sheet_names)
+    raw_sheets = set(raw_wb.sheetnames)
+    changed_sheets = set(changed_wb.sheetnames)
 
-    # ✅ Only matched sheets
     common_sheets = raw_sheets.intersection(changed_sheets)
 
     if not common_sheets:
-        st.error("No matching sheets found between files.")
+        st.error("No matching sheets found.")
         st.stop()
-
-    st.success(f"Comparing sheets: {', '.join(common_sheets)}")
-
-    output_wb = Workbook()
-    output_wb.remove(output_wb.active)
 
     highlight_fill = PatternFill(
         start_color="FFFF00",
@@ -39,46 +34,32 @@ if raw_file and changed_file:
 
         st.write(f"Processing: {sheet_name}")
 
-        raw_df = pd.read_excel(raw_excel, sheet_name=sheet_name)
-        changed_df = pd.read_excel(changed_excel, sheet_name=sheet_name)
+        raw_ws = raw_wb[sheet_name]
+        changed_ws = changed_wb[sheet_name]
 
-        # Align shapes safely
-        raw_df = raw_df.reindex_like(changed_df)
+        max_row = changed_ws.max_row
+        max_col = changed_ws.max_column
 
-        ws = output_wb.create_sheet(title=sheet_name)
+        for row in range(1, max_row + 1):
+            for col in range(1, max_col + 1):
 
-        # Write headers
-        for col_idx, column in enumerate(changed_df.columns, start=1):
-            ws.cell(row=1, column=col_idx, value=column)
+                new_cell = changed_ws.cell(row=row, column=col)
+                old_cell = raw_ws.cell(row=row, column=col)
 
-        # Compare cells
-        for row_idx in range(len(changed_df)):
-            for col_idx in range(len(changed_df.columns)):
+                new_val = new_cell.value
+                old_val = old_cell.value
 
-                new_val = changed_df.iloc[row_idx, col_idx]
-
-                old_val = (
-                    raw_df.iloc[row_idx, col_idx]
-                    if row_idx < len(raw_df)
-                    else None
-                )
-
-                cell = ws.cell(
-                    row=row_idx + 2,
-                    column=col_idx + 1,
-                    value=new_val
-                )
-
+                # compare safely
                 if str(new_val) != str(old_val):
-                    cell.fill = highlight_fill
+                    new_cell.fill = highlight_fill
 
-    # Save temporary file
+    # Save highlighted UPDATED workbook
     with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
-        output_wb.save(tmp.name)
+        changed_wb.save(tmp.name)
 
         with open(tmp.name, "rb") as f:
             st.download_button(
                 "⬇️ Download Highlighted Excel",
                 data=f,
-                file_name="diff_output.xlsx"
+                file_name="highlighted_updated.xlsx"
             )
